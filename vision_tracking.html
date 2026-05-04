@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Vision Tracking - Object Detection</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Share Tech Mono', monospace; }
+        body { background: #000; overflow: hidden; width: 100vw; height: 100vh; position: relative; }
+        #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .scanline { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15), rgba(0,0,0,0.15) 1px, transparent 1px, transparent 2px); pointer-events: none; z-index: 10; }
+        .top-bar, .bottom-bar { position: absolute; left: 0; right: 0; background: rgba(0,0,0,0.85); padding: 10px; display: flex; align-items: center; gap: 10px; z-index: 20; flex-wrap: wrap; }
+        .top-bar { top: 0; }
+        .bottom-bar { bottom: 0; justify-content: space-between; }
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; background: #ff3d3d; }
+        .status-dot.connected { background: #00ff8c; box-shadow: 0 0 10px #00ff8c; }
+        input { background: rgba(255,255,255,0.1); border: 1px solid rgba(0,255,140,0.3); color: #00ff8c; padding: 8px; font-size: 12px; font-family: inherit; flex: 1; min-width: 120px; }
+        button { background: rgba(0,255,140,0.2); border: 1px solid #00ff8c; color: #00ff8c; padding: 8px 16px; font-family: inherit; cursor: pointer; font-size: 12px; text-transform: uppercase; }
+        button:active { background: rgba(0,255,140,0.4); }
+        button.toggle-off { background: rgba(255,61,61,0.2); border-color: #ff3d3d; color: #ff3d3d; }
+        .info { color: #00ff8c; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+        .info.searching { color: #ffb800; }
+        .info.lost { color: #ff3d3d; }
+        .wake-indicator { position: absolute; top: 50px; right: 10px; background: rgba(0,0,0,0.85); padding: 5px 10px; font-size: 9px; color: #00ff8c; z-index: 20; border: 1px solid rgba(0,255,140,0.3); line-height: 1.4; text-align: right; }
+    </style>
+</head>
+<body>
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div class="scanline"></div>
+    <div class="top-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <input type="text" id="ipInput" placeholder="ESP32 IP (e.g. 192.168.1.100)">
+        <button id="connectBtn">Connect</button>
+    </div>
+    <div class="bottom-bar">
+        <button id="trackingBtn" class="toggle-off">Tracking OFF</button>
+        <div class="info" id="commandInfo">STOP</div>
+        <div class="info searching" id="statusInfo">LOADING...</div>
+        <div class="info" id="fpsInfo">0 FPS</div>
+    </div>
+    <div class="wake-indicator" id="wakeIndicator">SCREEN LOCK: OFF</div>
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const ipInput = document.getElementById('ipInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const statusDot = document.getElementById('statusDot');
+        const trackingBtn = document.getElementById('trackingBtn');
+        const commandInfo = document.getElementById('commandInfo');
+        const statusInfo = document.getElementById('statusInfo');
+        const fpsInfo = document.getElementById('fpsInfo');
+        const wakeIndicator = document.getElementById('wakeIndicator');
+
+        let ws = null, wsReconnecting = false, isTracking = false, model = null, modelsLoaded = false;
+        let lastDetectionTime = 0, lastCommandTime = 0, currentCommand = 'STOP';
+        let frameCount = 0, lastFpsTime = Date.now(), fpsUpdateTime = Date.now();
+        let wakeLock = null;
+
+        ipInput.value = localStorage.getItem('esp32_ip') || '';
+
+        // Keep screen awake - critical for mounted phone
+        async function keepAwake() {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log('Wake lock active');
+                wakeIndicator.textContent = 'SCREEN LOCK: ON';
+                wakeIndicator.style.color = '#00ff8c';
+            } catch(e) {
+                console.log('Wake lock failed:', e);
+                wakeIndicator.textContent = 'SCREEN LOCK: FAILED';
+                wakeIndicator.style.color = '#ff3d3d';
+            }
+        }
+
+        // Re-request wake lock when page becomes visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && !wakeLock) {
+                keepAwake();
+            }
+        });
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                };
+            } catch (err) {
+                alert('Camera access denied: ' + err.message);
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            if (video.videoWidth && video.videoHeight) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+            }
+        });
+
+        async function loadModels() {
+            try {
+                statusInfo.textContent = 'LOADING MODEL...';
+                const startTime = Date.now();
+                model = await cocoSsd.load();
+                const loadTime = Date.now() - startTime;
+                modelsLoaded = true;
+                
+                // Show if model was cached (fast load) or downloaded (slow load)
+                const cached = loadTime < 2000;
+                console.log(`COCO-SSD model loaded in ${loadTime}ms (${cached ? 'CACHED' : 'DOWNLOADED'})`);
+                
+                statusInfo.textContent = cached ? 'READY (CACHED)' : 'READY (DOWNLOADED)';
+                statusInfo.className = 'info';
+                
+                // Update wake indicator with cache status
+                setTimeout(() => {
+                    wakeIndicator.innerHTML = `SCREEN LOCK: ON<br>MODEL: ${cached ? 'CACHED ✓' : 'DOWNLOADED'}`;
+                }, 1000);
+            } catch (err) {
+                console.error('Model loading failed:', err);
+                statusInfo.textContent = 'MODEL ERROR';
+                statusInfo.className = 'info lost';
+                wakeIndicator.textContent = 'MODEL LOAD FAILED';
+                wakeIndicator.style.color = '#ff3d3d';
+                alert('Failed to load model. Check internet connection and reload page.');
+            }
+        }
+
+        function connectWebSocket() {
+            const ip = ipInput.value.trim();
+            if (!ip) { alert('Enter ESP32 IP address'); return; }
+            localStorage.setItem('esp32_ip', ip);
+            if (ws) { ws.onclose = null; ws.close(); }
+            ws = new WebSocket(`ws://${ip}:81`);
+            ws.onopen = () => { statusDot.classList.add('connected'); wsReconnecting = false; console.log('WebSocket connected'); };
+            ws.onclose = () => {
+                statusDot.classList.remove('connected');
+                if (ipInput.value.trim() && !wsReconnecting) {
+                    wsReconnecting = true;
+                    setTimeout(() => { wsReconnecting = false; connectWebSocket(); }, 3000);
+                }
+            };
+            ws.onerror = (err) => console.error('WebSocket error:', err);
+        }
+
+        function sendCommand(move, speed = 150) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ move, source: "TRACKING", speed }));
+                currentCommand = move;
+                commandInfo.textContent = move;
+            }
+        }
+
+        async function detectObjects() {
+            if (!modelsLoaded || !model || !video.videoWidth || video.readyState !== video.HAVE_ENOUGH_DATA) {
+                requestAnimationFrame(detectObjects);
+                return;
+            }
+
+            const now = Date.now();
+            const timeSinceLastFrame = now - lastFpsTime;
+            if (timeSinceLastFrame < 66) { requestAnimationFrame(detectObjects); return; }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw zone indicators
+            ctx.strokeStyle = 'rgba(255, 184, 0, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 3, 0);
+            ctx.lineTo(canvas.width / 3, canvas.height);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(canvas.width * 2 / 3, 0);
+            ctx.lineTo(canvas.width * 2 / 3, canvas.height);
+            ctx.stroke();
+
+            const predictions = await model.detect(video);
+            const people = predictions.filter(p => p.class === 'person');
+
+            if (people && people.length > 0) {
+                lastDetectionTime = now;
+                statusInfo.textContent = `LOCKED (${people.length} PERSON)`;
+                statusInfo.className = 'info';
+
+                const prediction = people[0];
+                const [x, y, width, height] = prediction.bbox;
+
+                ctx.strokeStyle = '#00ff8c';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, y, width, height);
+                ctx.fillStyle = '#00ff8c';
+                ctx.font = '16px Share Tech Mono';
+                ctx.fillText(`${prediction.class} ${Math.round(prediction.score * 100)}%`, x, y > 20 ? y - 5 : y + 20);
+
+                const centroidX = x + width / 2;
+                const centroidY = y + height / 2;
+                ctx.fillStyle = '#00ff8c';
+                ctx.beginPath();
+                ctx.arc(centroidX, centroidY, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw other people (dimmed)
+                for (let i = 1; i < people.length; i++) {
+                    const pred = people[i];
+                    const [px, py, pw, ph] = pred.bbox;
+                    ctx.strokeStyle = 'rgba(0, 255, 140, 0.3)';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(px, py, pw, ph);
+                    ctx.fillStyle = 'rgba(0, 255, 140, 0.5)';
+                    ctx.fillText(`${pred.class} ${Math.round(pred.score * 100)}%`, px, py > 20 ? py - 5 : py + 20);
+                }
+
+                // Draw other objects (very dimmed)
+                const otherObjects = predictions.filter(p => p.class !== 'person');
+                otherObjects.forEach(pred => {
+                    const [px, py, pw, ph] = pred.bbox;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(px, py, pw, ph);
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                    ctx.font = '12px Share Tech Mono';
+                    ctx.fillText(pred.class, px, py > 15 ? py - 3 : py + 15);
+                });
+
+                // Tracking logic
+                if (isTracking && now - lastCommandTime > 300) {
+                    const leftThird = canvas.width / 3;
+                    const rightThird = canvas.width * 2 / 3;
+                    if (centroidX < leftThird) sendCommand('LEFT', 150);
+                    else if (centroidX > rightThird) sendCommand('RIGHT', 150);
+                    else sendCommand('FORWARD', 150);
+                    lastCommandTime = now;
+                }
+            } else {
+                if (now - lastDetectionTime > 2000 && isTracking) {
+                    if (currentCommand !== 'STOP' && now - lastCommandTime > 300) {
+                        sendCommand('STOP', 0);
+                        lastCommandTime = now;
+                    }
+                    statusInfo.textContent = 'LOST';
+                    statusInfo.className = 'info lost';
+                } else {
+                    statusInfo.textContent = 'SEARCHING';
+                    statusInfo.className = 'info searching';
+                }
+            }
+
+            frameCount++;
+            const timeSinceFpsUpdate = now - fpsUpdateTime;
+            if (timeSinceFpsUpdate >= 1000) {
+                fpsInfo.textContent = `${frameCount} FPS`;
+                frameCount = 0;
+                fpsUpdateTime = now;
+            }
+            lastFpsTime = now;
+            requestAnimationFrame(detectObjects);
+        }
+
+        trackingBtn.addEventListener('click', () => {
+            isTracking = !isTracking;
+            if (isTracking) {
+                trackingBtn.textContent = 'Tracking ON';
+                trackingBtn.classList.remove('toggle-off');
+                lastDetectionTime = Date.now();
+            } else {
+                trackingBtn.textContent = 'Tracking OFF';
+                trackingBtn.classList.add('toggle-off');
+                sendCommand('STOP', 0);
+                currentCommand = 'STOP';
+            }
+        });
+
+        connectBtn.addEventListener('click', connectWebSocket);
+
+        async function init() {
+            await keepAwake();  // Prevent screen sleep FIRST
+            await initCamera();
+            await loadModels();
+            setTimeout(() => detectObjects(), 1000);
+        }
+        init();
+    </script>
+</body>
+</html>

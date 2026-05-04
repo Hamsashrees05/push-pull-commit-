@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Robot Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Share Tech Mono', monospace;
+        }
+        body {
+            background: #0a0a0a;
+            color: #00ff8c;
+            overflow: hidden;
+            height: 100vh;
+            position: relative;
+            touch-action: pan-y;
+            overscroll-behavior: none;
+        }
+        .scanline {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.15),
+                rgba(0, 0, 0, 0.15) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+        .container {
+            padding: 10px;
+            overflow-y: auto;
+            height: 100vh;
+        }
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            margin-bottom: 10px;
+        }
+        .status-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 10px;
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff3d3d;
+        }
+        .status-dot.connected {
+            background: #00ff8c;
+            box-shadow: 0 0 10px #00ff8c;
+        }
+        .mode-badge {
+            background: rgba(0, 207, 255, 0.3);
+            border: 1px solid #00cfff;
+            color: #00cfff;
+            padding: 4px 8px;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+        .connection-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .connection-box {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 8px;
+        }
+        .connection-box label {
+            font-size: 9px;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .connection-box input {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(0, 255, 140, 0.3);
+            color: #00ff8c;
+            padding: 6px;
+            font-size: 11px;
+            font-family: inherit;
+            margin-bottom: 4px;
+        }
+        .connection-box button {
+            width: 100%;
+            background: rgba(0, 255, 140, 0.2);
+            border: 1px solid #00ff8c;
+            color: #00ff8c;
+            padding: 6px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .dpad {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+            aspect-ratio: 1;
+            max-width: 300px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .dpad-btn {
+            background: rgba(0, 255, 140, 0.2);
+            border: 2px solid #00ff8c;
+            color: #00ff8c;
+            font-size: 16px;
+            cursor: pointer;
+            touch-action: none;
+            user-select: none;
+        }
+        .dpad-btn:active {
+            background: rgba(0, 255, 140, 0.5);
+        }
+        .dpad-btn.stop {
+            background: rgba(255, 61, 61, 0.3);
+            border-color: #ff3d3d;
+            color: #ff3d3d;
+            grid-column: 2;
+            grid-row: 2;
+        }
+        .dpad-btn.up { grid-column: 2; grid-row: 1; }
+        .dpad-btn.down { grid-column: 2; grid-row: 3; }
+        .dpad-btn.left { grid-column: 1; grid-row: 2; }
+        .dpad-btn.right { grid-column: 3; grid-row: 2; }
+        .speed-control {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .speed-control label {
+            font-size: 11px;
+            display: block;
+            margin-bottom: 6px;
+        }
+        .speed-control input {
+            width: 100%;
+            accent-color: #00ff8c;
+        }
+        .mode-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .mode-btn {
+            background: rgba(0, 255, 140, 0.2);
+            border: 1px solid #00ff8c;
+            color: #00ff8c;
+            padding: 10px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .mode-btn.active {
+            background: rgba(0, 255, 140, 0.5);
+            box-shadow: 0 0 10px #00ff8c;
+        }
+        .actuator-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .actuator-btn {
+            background: rgba(0, 255, 140, 0.2);
+            border: 1px solid #00ff8c;
+            color: #00ff8c;
+            padding: 12px;
+            font-family: inherit;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .actuator-btn.active {
+            background: rgba(0, 255, 140, 0.5);
+        }
+        .map-container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .map-container h3 {
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+        #map {
+            width: 100%;
+            aspect-ratio: 1;
+            background: #000;
+            border: 1px solid rgba(0, 255, 140, 0.2);
+        }
+        .radar-container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .radar-container h3 {
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+        #radar {
+            width: 100%;
+            aspect-ratio: 1;
+            background: #000;
+            border: 1px solid rgba(0, 255, 140, 0.2);
+        }
+        .sensor-strip {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .sensor-box {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 8px;
+            text-align: center;
+        }
+        .sensor-box .label {
+            font-size: 9px;
+            opacity: 0.7;
+        }
+        .sensor-box .value {
+            font-size: 14px;
+            margin-top: 4px;
+        }
+        .event-log {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid rgba(0, 255, 140, 0.2);
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .event-log h3 {
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+        .log-entry {
+            font-size: 9px;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(0, 255, 140, 0.1);
+        }
+        .log-entry.alert {
+            color: #ff3d3d;
+        }
+        .log-entry.command {
+            color: #00ff8c;
+        }
+        .log-entry .time {
+            opacity: 0.5;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="scanline"></div>
+    <div class="container">
+        <div class="top-bar">
+            <div class="status-group">
+                <div class="status-dot" id="esp1Status"></div>
+                <span>ESP32 #1</span>
+            </div>
+            <div class="status-group">
+                <div class="status-dot" id="esp2Status"></div>
+                <span>ESP32 #2</span>
+            </div>
+            <div class="mode-badge" id="modeBadge">RECON</div>
+        </div>
+
+        <div class="connection-row">
+            <div class="connection-box">
+                <label>ESP32 #1 Control</label>
+                <input type="text" id="ip1Input" placeholder="192.168.1.100">
+                <button id="connect1Btn">Connect</button>
+            </div>
+            <div class="connection-box">
+                <label>ESP32 #2 Localization</label>
+                <input type="text" id="ip2Input" placeholder="192.168.1.101">
+                <button id="connect2Btn">Connect</button>
+            </div>
+        </div>
+
+        <div class="dpad">
+            <button class="dpad-btn up" data-move="FORWARD">▲</button>
+            <button class="dpad-btn left" data-move="LEFT">◄</button>
+            <button class="dpad-btn stop" data-move="STOP">STOP</button>
+            <button class="dpad-btn right" data-move="RIGHT">►</button>
+            <button class="dpad-btn down" data-move="BACKWARD">▼</button>
+        </div>
+
+        <div class="speed-control">
+            <label>Speed: <span id="speedValue">200</span></label>
+            <input type="range" id="speedSlider" min="50" max="255" value="200">
+        </div>
+        <div class="mode-buttons">
+            <button class="mode-btn active" data-mode="RECON">RECON</button>
+            <button class="mode-btn" data-mode="GHOST">GHOST</button>
+            <button class="mode-btn" data-mode="DECOY">DECOY</button>
+        </div>
+
+        <div class="actuator-grid">
+            <button class="actuator-btn" data-servo="OPEN">Servo OPEN</button>
+            <button class="actuator-btn" data-servo="CLOSE">Servo CLOSE</button>
+            <button class="actuator-btn" data-toggle="drone">Drone OFF</button>
+            <button class="actuator-btn" data-toggle="buzzer">Buzzer OFF</button>
+        </div>
+
+        <div class="map-container">
+            <h3>LIVE MAP</h3>
+            <canvas id="map"></canvas>
+        </div>
+
+        <div class="radar-container">
+            <h3>RADAR SWEEP</h3>
+            <canvas id="radar"></canvas>
+        </div>
+
+        <div class="sensor-strip">
+            <div class="sensor-box">
+                <div class="label">ULTRASONIC</div>
+                <div class="value" id="ultrasonicValue">--</div>
+            </div>
+            <div class="sensor-box">
+                <div class="label">TOF</div>
+                <div class="value" id="tofValue">--</div>
+            </div>
+            <div class="sensor-box">
+                <div class="label">ANGLE</div>
+                <div class="value" id="angleValue">--</div>
+            </div>
+            <div class="sensor-box">
+                <div class="label">CONFIDENCE</div>
+                <div class="value" id="confidenceValue">--</div>
+            </div>
+        </div>
+
+        <div class="event-log">
+            <h3>EVENT LOG</h3>
+            <div id="logEntries"></div>
+        </div>
+    </div>
+    <script>
+        const ip1Input = document.getElementById('ip1Input');
+        const ip2Input = document.getElementById('ip2Input');
+        const connect1Btn = document.getElementById('connect1Btn');
+        const connect2Btn = document.getElementById('connect2Btn');
+        const esp1Status = document.getElementById('esp1Status');
+        const esp2Status = document.getElementById('esp2Status');
+        const modeBadge = document.getElementById('modeBadge');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+        const mapCanvas = document.getElementById('map');
+        const mapCtx = mapCanvas.getContext('2d');
+        const radarCanvas = document.getElementById('radar');
+        const radarCtx = radarCanvas.getContext('2d');
+        const logEntries = document.getElementById('logEntries');
+
+        let ws1 = null;
+        let ws2 = null;
+        let currentMode = 'RECON';
+        let currentSpeed = 200;
+        let moveInterval = null;
+        let currentMove = null;
+        let droneOn = false;
+        let buzzerOn = false;
+
+        // Robot state
+        let robotPos = [0, 0];
+        let robotAngle = 0;
+        let pathTrail = [];
+        let obstacleDetected = false;
+        let confidence = 0;
+
+        // Radar sweep state
+        let radarSweepAngle = 0;
+        let radarSweepDirection = 1;
+        let radarPoints = [];  // Array of {angle, distance, timestamp}
+        let currentServoAngle = 90;
+
+        // Load saved IPs
+        ip1Input.value = localStorage.getItem('esp1_ip') || '';
+        ip2Input.value = localStorage.getItem('esp2_ip') || '';
+
+        // Setup canvas
+        function resizeCanvas() {
+            const mapSize = mapCanvas.clientWidth;
+            mapCanvas.width = mapSize;
+            mapCanvas.height = mapSize;
+            
+            const radarSize = radarCanvas.clientWidth;
+            radarCanvas.width = radarSize;
+            radarCanvas.height = radarSize;
+            
+            drawMap();
+            drawRadar();
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        // Reconnect flags to prevent infinite loops
+        let ws1Reconnecting = false;
+        let ws2Reconnecting = false;
+
+        // WebSocket ESP32 #1 (Control)
+        function connectWS1() {
+            const ip = ip1Input.value.trim();
+            if (!ip) return;
+            localStorage.setItem('esp1_ip', ip);
+            
+            if (ws1) {
+                ws1.onclose = null; // Prevent old handler from firing
+                ws1.close();
+            }
+            ws1 = new WebSocket(`ws://${ip}:81`);
+            
+            ws1.onopen = () => {
+                esp1Status.classList.add('connected');
+                ws1Reconnecting = false;
+                addLog('ESP32 #1 connected', 'command');
+            };
+            
+            ws1.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.node === 'CONTROL') {
+                        if (data.mode) currentMode = data.mode;
+                        if (data.obstacle !== undefined) {
+                            obstacleDetected = data.obstacle;
+                            if (data.obstacle) addLog('OBSTACLE DETECTED', 'alert');
+                        }
+                        if (data.ultrasonic !== undefined) {
+                            document.getElementById('ultrasonicValue').textContent = data.ultrasonic + ' cm';
+                            
+                            // Add to radar if servo angle is provided
+                            if (data.servoAngle !== undefined) {
+                                currentServoAngle = data.servoAngle;
+                                addRadarPoint(data.servoAngle, data.ultrasonic);
+                            }
+                        }
+                    }
+                    if (data.alert) {
+                        addLog(`ALERT: ${data.alert} - ${data.distance}cm`, 'alert');
+                    }
+                } catch (e) {}
+            };
+            
+            ws1.onclose = () => {
+                esp1Status.classList.remove('connected');
+                if (ip1Input.value.trim() && !ws1Reconnecting) {
+                    ws1Reconnecting = true;
+                    setTimeout(() => {
+                        ws1Reconnecting = false;
+                        connectWS1();
+                    }, 3000);
+                }
+            };
+            
+            ws1.onerror = (err) => {
+                console.error('WebSocket #1 error:', err);
+            };
+        }
+
+        // WebSocket ESP32 #2 (Localization)
+        function connectWS2() {
+            const ip = ip2Input.value.trim();
+            if (!ip) return;
+            localStorage.setItem('esp2_ip', ip);
+            
+            if (ws2) {
+                ws2.onclose = null; // Prevent old handler from firing
+                ws2.close();
+            }
+            ws2 = new WebSocket(`ws://${ip}:82`);
+            ws2.onopen = () => {
+                esp2Status.classList.add('connected');
+                addLog('ESP32 #2 connected', 'command');
+            };
+            
+            ws2.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.node === 'LOCALIZATION') {
+                        if (data.pos) {
+                            robotPos = data.pos;
+                            pathTrail.push([...data.pos]);
+                            if (pathTrail.length > 500) pathTrail.shift();
+                        }
+                        if (data.angle !== undefined) {
+                            robotAngle = data.angle;
+                            document.getElementById('angleValue').textContent = data.angle + '°';
+                        }
+                        if (data.tof !== undefined) {
+                            document.getElementById('tofValue').textContent = data.tof + ' mm';
+                        }
+                        if (data.confidence !== undefined) {
+                            confidence = data.confidence;
+                            document.getElementById('confidenceValue').textContent = data.confidence + '%';
+                        }
+                        drawMap();
+                    }
+                } catch (e) {}
+            };
+            
+            ws2.onclose = () => {
+                esp2Status.classList.remove('connected');
+                if (ip2Input.value.trim() && !ws2Reconnecting) {
+                    ws2Reconnecting = true;
+                    setTimeout(() => {
+                        ws2Reconnecting = false;
+                        connectWS2();
+                    }, 3000);
+                }
+            };
+            
+            ws2.onerror = (err) => {
+                console.error('WebSocket #2 error:', err);
+            };
+        }
+
+        // Send command to ESP32 #1
+        function sendCommand(move, speed = currentSpeed) {
+            if (ws1 && ws1.readyState === WebSocket.OPEN) {
+                const cmd = {
+                    move: move,
+                    speed: speed,
+                    mode: currentMode,
+                    source: 'MANUAL'
+                };
+                ws1.send(JSON.stringify(cmd));
+                addLog(`CMD: ${move} @ ${speed}`, 'command');
+            }
+        }
+        // Send servo command
+        function sendServo(action) {
+            if (ws1 && ws1.readyState === WebSocket.OPEN) {
+                ws1.send(JSON.stringify({ servo: action }));
+                addLog(`SERVO: ${action}`, 'command');
+            }
+        }
+
+        // Send drone/buzzer command
+        function sendToggle(device, state) {
+            if (ws1 && ws1.readyState === WebSocket.OPEN) {
+                ws1.send(JSON.stringify({ [device]: state }));
+                addLog(`${device.toUpperCase()}: ${state}`, 'command');
+            }
+        }
+
+        // Add log entry
+        function addLog(message, type = '') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="time">${time}</span>${message}`;
+            logEntries.insertBefore(entry, logEntries.firstChild);
+            
+            // Keep only last 15 entries
+            while (logEntries.children.length > 15) {
+                logEntries.removeChild(logEntries.lastChild);
+            }
+        }
+
+        // Draw map
+        function drawMap() {
+            const w = mapCanvas.width;
+            const h = mapCanvas.height;
+            const centerX = w / 2;
+            const centerY = h / 2;
+            const scale = 50; // pixels per meter
+
+            mapCtx.fillStyle = '#000';
+            mapCtx.fillRect(0, 0, w, h);
+
+            // Grid (1m spacing)
+            mapCtx.strokeStyle = 'rgba(0, 255, 140, 0.1)';
+            mapCtx.lineWidth = 1;
+            for (let i = -10; i <= 10; i++) {
+                mapCtx.beginPath();
+                mapCtx.moveTo(centerX + i * scale, 0);
+                mapCtx.lineTo(centerX + i * scale, h);
+                mapCtx.stroke();
+                mapCtx.beginPath();
+                mapCtx.moveTo(0, centerY + i * scale);
+                mapCtx.lineTo(w, centerY + i * scale);
+                mapCtx.stroke();
+            }
+            // Path trail
+            mapCtx.strokeStyle = 'rgba(0, 207, 255, 0.3)';
+            mapCtx.lineWidth = 2;
+            mapCtx.beginPath();
+            pathTrail.forEach((pos, i) => {
+                const x = centerX + pos[0] * scale;
+                const y = centerY - pos[1] * scale;
+                if (i === 0) mapCtx.moveTo(x, y);
+                else mapCtx.lineTo(x, y);
+            });
+            mapCtx.stroke();
+
+            // Confidence radius
+            if (confidence > 0) {
+                mapCtx.strokeStyle = 'rgba(255, 184, 0, 0.3)';
+                mapCtx.lineWidth = 1;
+                mapCtx.beginPath();
+                const radius = (100 - confidence) * scale / 100;
+                mapCtx.arc(centerX + robotPos[0] * scale, centerY - robotPos[1] * scale, radius, 0, Math.PI * 2);
+                mapCtx.stroke();
+            }
+
+            // Robot dot
+            const robotX = centerX + robotPos[0] * scale;
+            const robotY = centerY - robotPos[1] * scale;
+            mapCtx.fillStyle = obstacleDetected ? '#ff3d3d' : '#00ff8c';
+            mapCtx.beginPath();
+            mapCtx.arc(robotX, robotY, 8, 0, Math.PI * 2);
+            mapCtx.fill();
+
+            // Heading arrow
+            mapCtx.strokeStyle = obstacleDetected ? '#ff3d3d' : '#00ff8c';
+            mapCtx.lineWidth = 2;
+            const arrowLen = 20;
+            const angleRad = (robotAngle - 90) * Math.PI / 180;
+            const arrowX = robotX + Math.cos(angleRad) * arrowLen;
+            const arrowY = robotY + Math.sin(angleRad) * arrowLen;
+            mapCtx.beginPath();
+            mapCtx.moveTo(robotX, robotY);
+            mapCtx.lineTo(arrowX, arrowY);
+            mapCtx.stroke();
+
+            // Position overlay
+            mapCtx.fillStyle = '#00cfff';
+            mapCtx.font = '10px Share Tech Mono';
+            mapCtx.fillText(`X:${robotPos[0].toFixed(2)} Y:${robotPos[1].toFixed(2)} A:${robotAngle}°`, 10, 20);
+        }
+
+        // Draw radar sweep
+        function drawRadar() {
+            const w = radarCanvas.width;
+            const h = radarCanvas.height;
+            const centerX = w / 2;
+            const centerY = h;
+            const maxRange = Math.min(w, h) * 0.9;
+
+            // Black background
+            radarCtx.fillStyle = '#000';
+            radarCtx.fillRect(0, 0, w, h);
+
+            // Draw range circles (every 50cm up to 200cm)
+            radarCtx.strokeStyle = 'rgba(0, 255, 140, 0.15)';
+            radarCtx.lineWidth = 1;
+            for (let r = 50; r <= 200; r += 50) {
+                const radius = (r / 200) * maxRange;
+                radarCtx.beginPath();
+                radarCtx.arc(centerX, centerY, radius, Math.PI, 0);
+                radarCtx.stroke();
+            }
+
+            // Draw angle lines (every 30°)
+            radarCtx.strokeStyle = 'rgba(0, 255, 140, 0.15)';
+            for (let angle = 0; angle <= 180; angle += 30) {
+                const rad = (angle - 90) * Math.PI / 180;
+                radarCtx.beginPath();
+                radarCtx.moveTo(centerX, centerY);
+                radarCtx.lineTo(centerX + Math.cos(rad) * maxRange, centerY + Math.sin(rad) * maxRange);
+                radarCtx.stroke();
+            }
+
+            // Draw sweeping beam with gradient (bright green glow)
+            const sweepRad = (currentServoAngle - 90) * Math.PI / 180;
+            const sweepEndX = centerX + Math.cos(sweepRad) * maxRange;
+            const sweepEndY = centerY + Math.sin(sweepRad) * maxRange;
+
+            // Create radial gradient for beam glow
+            const gradient = radarCtx.createRadialGradient(centerX, centerY, 0, centerX, centerY, maxRange);
+            gradient.addColorStop(0, 'rgba(0, 255, 140, 0.8)');
+            gradient.addColorStop(0.3, 'rgba(0, 255, 140, 0.4)');
+            gradient.addColorStop(1, 'rgba(0, 255, 140, 0)');
+
+            // Draw sweeping arc (30° wide beam)
+            radarCtx.fillStyle = gradient;
+            radarCtx.beginPath();
+            radarCtx.moveTo(centerX, centerY);
+            radarCtx.arc(centerX, centerY, maxRange, sweepRad - 0.26, sweepRad);  // 30° = 0.52 rad
+            radarCtx.closePath();
+            radarCtx.fill();
+
+            // Draw bright sweep line
+            radarCtx.strokeStyle = 'rgba(0, 255, 140, 1)';
+            radarCtx.lineWidth = 3;
+            radarCtx.shadowBlur = 15;
+            radarCtx.shadowColor = '#00ff8c';
+            radarCtx.beginPath();
+            radarCtx.moveTo(centerX, centerY);
+            radarCtx.lineTo(sweepEndX, sweepEndY);
+            radarCtx.stroke();
+            radarCtx.shadowBlur = 0;
+
+            // Draw detected points (fade old ones)
+            const now = Date.now();
+            radarPoints = radarPoints.filter(p => now - p.timestamp < 5000);
+            
+            radarPoints.forEach(point => {
+                const age = now - point.timestamp;
+                const alpha = Math.max(0, 1 - age / 5000);
+                const distance = Math.min(point.distance, 200);
+                const radius = (distance / 200) * maxRange;
+                const rad = (point.angle - 90) * Math.PI / 180;
+                
+                const x = centerX + Math.cos(rad) * radius;
+                const y = centerY + Math.sin(rad) * radius;
+                
+                // Draw glowing point
+                radarCtx.fillStyle = `rgba(255, 61, 61, ${alpha})`;
+                radarCtx.shadowBlur = 10;
+                radarCtx.shadowColor = `rgba(255, 61, 61, ${alpha})`;
+                radarCtx.beginPath();
+                radarCtx.arc(x, y, 5, 0, Math.PI * 2);
+                radarCtx.fill();
+                radarCtx.shadowBlur = 0;
+            });
+
+            // Servo angle indicator
+            radarCtx.fillStyle = '#00ff8c';
+            radarCtx.font = '11px Share Tech Mono';
+            radarCtx.fillText(`SERVO: ${currentServoAngle}°`, 10, 20);
+            
+            // Distance indicator
+            radarCtx.fillText(`RANGE: 200cm`, w - 100, 20);
+        }
+
+        // Add radar point
+        function addRadarPoint(angle, distance) {
+            if (distance > 0 && distance < 200) {
+                radarPoints.push({
+                    angle: angle,
+                    distance: distance,
+                    timestamp: Date.now()
+                });
+            }
+            drawRadar();
+        }
+
+        // Animate radar sweep
+        setInterval(() => {
+            drawRadar();
+        }, 50);
+
+        // D-Pad controls
+        document.querySelectorAll('.dpad-btn').forEach(btn => {
+            const move = btn.dataset.move;
+            
+            btn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                currentMove = move;
+                sendCommand(move);
+                if (move !== 'STOP') {
+                    moveInterval = setInterval(() => sendCommand(move), 100);
+                }
+            });
+            
+            btn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                if (move !== 'STOP') {
+                    sendCommand('STOP');
+                }
+            });
+            
+            btn.addEventListener('touchcancel', (e) => {
+                e.preventDefault();
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                if (move !== 'STOP') {
+                    sendCommand('STOP');
+                }
+            });
+
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                currentMove = move;
+                sendCommand(move);
+                if (move !== 'STOP') {
+                    moveInterval = setInterval(() => sendCommand(move), 100);
+                }
+            });
+            
+            btn.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                if (move !== 'STOP') {
+                    sendCommand('STOP');
+                }
+            });
+            
+            btn.addEventListener('mouseleave', (e) => {
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                    sendCommand('STOP');
+                }
+            });
+        });
+
+        // Speed slider
+        speedSlider.addEventListener('input', (e) => {
+            currentSpeed = parseInt(e.target.value);
+            speedValue.textContent = currentSpeed;
+        });
+        // Mode buttons
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentMode = btn.dataset.mode;
+                modeBadge.textContent = currentMode;
+                addLog(`MODE: ${currentMode}`, 'command');
+            });
+        });
+
+        // Actuator buttons
+        document.querySelectorAll('.actuator-btn').forEach(btn => {
+            if (btn.dataset.servo) {
+                btn.addEventListener('click', () => {
+                    sendServo(btn.dataset.servo);
+                });
+            } else if (btn.dataset.toggle) {
+                btn.addEventListener('click', () => {
+                    const device = btn.dataset.toggle;
+                    if (device === 'drone') {
+                        droneOn = !droneOn;
+                        btn.textContent = droneOn ? 'Drone ON' : 'Drone OFF';
+                        btn.classList.toggle('active', droneOn);
+                        sendToggle('drone', droneOn ? 'ON' : 'OFF');
+                    } else if (device === 'buzzer') {
+                        buzzerOn = !buzzerOn;
+                        btn.textContent = buzzerOn ? 'Buzzer ON' : 'Buzzer OFF';
+                        btn.classList.toggle('active', buzzerOn);
+                        sendToggle('buzzer', buzzerOn ? 'ON' : 'OFF');
+                    }
+                });
+            }
+        });
+
+        // Connection buttons
+        connect1Btn.addEventListener('click', connectWS1);
+        connect2Btn.addEventListener('click', connectWS2);
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.repeat) return;
+            
+            // Don't trigger if typing in input field
+            if (e.target.tagName === 'INPUT') return;
+            
+            switch(e.key.toLowerCase()) {
+                case 'w':
+                    if (moveInterval) clearInterval(moveInterval);
+                    currentMove = 'FORWARD';
+                    sendCommand('FORWARD');
+                    moveInterval = setInterval(() => sendCommand('FORWARD'), 100);
+                    break;
+                case 's':
+                    if (moveInterval) clearInterval(moveInterval);
+                    currentMove = 'BACKWARD';
+                    sendCommand('BACKWARD');
+                    moveInterval = setInterval(() => sendCommand('BACKWARD'), 100);
+                    break;
+                case 'a':
+                    if (moveInterval) clearInterval(moveInterval);
+                    currentMove = 'LEFT';
+                    sendCommand('LEFT');
+                    moveInterval = setInterval(() => sendCommand('LEFT'), 100);
+                    break;
+                case 'd':
+                    if (moveInterval) clearInterval(moveInterval);
+                    currentMove = 'RIGHT';
+                    sendCommand('RIGHT');
+                    moveInterval = setInterval(() => sendCommand('RIGHT'), 100);
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    if (moveInterval) {
+                        clearInterval(moveInterval);
+                        moveInterval = null;
+                    }
+                    sendCommand('STOP');
+                    break;
+                case '1':
+                    document.querySelector('[data-mode="RECON"]').click();
+                    break;
+                case '2':
+                    document.querySelector('[data-mode="GHOST"]').click();
+                    break;
+                case '3':
+                    document.querySelector('[data-mode="DECOY"]').click();
+                    break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (['w', 's', 'a', 'd'].includes(e.key.toLowerCase())) {
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                }
+                sendCommand('STOP');
+            }
+        });
+
+        // Initial map draw
+        drawMap();
+    </script>
+</body>
+</html>
